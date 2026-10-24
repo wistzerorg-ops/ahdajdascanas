@@ -211,7 +211,7 @@
             <span class="slider"></span>
         </label>
         <hr style="border: 1px solid #000; margin: 10px 0;">
-        <p style="font-family: sans-serif; font-size: 12px; color: #333;">A API do Gemini já está configurada diretamente no código-fonte do jogo.</p>
+        <p style="font-family: sans-serif; font-size: 12px; color: #333;">Sistema configurado para Vercel (Proxy) ou Chave Local.</p>
     </div>
 </div>
 
@@ -273,9 +273,10 @@
 
 <script>
 // ==========================================
-// COLOQUE SUA API KEY DO GEMINI AQUI!
+// CONFIGURAÇÃO DA API
 // ==========================================
-const GEMINI_API_KEY = "AQ.Ab8RN6JfQHblN9q3tyRoqheH2FyYmtit5_687XLSOdUiCkQMIw"; 
+// SE FOR TESTAR NO LIVE SERVER, COLE SUA CHAVE AQUI EMBAIXO:
+const GEMINI_API_KEY = ""; 
 
 // ==========================================
 // BANCO DE DADOS DE VÍTIMAS
@@ -425,7 +426,7 @@ function speak(text) {
 }
 
 // ==========================================
-// CHAT E INTELIGÊNCIA ARTIFICIAL (GEMINI)
+// CHAT E INTELIGÊNCIA ARTIFICIAL (GEMINI 2.0)
 // ==========================================
 const chatContainer = $('phone-chat');
 const chatInput = $('chat-input');
@@ -467,7 +468,6 @@ async function sendMessage() {
     chatInput.value = '';
     addMessage(text, 'player');
     
-    // Adiciona ao histórico como 'user' (o Gemini exige que seja 'user' e 'model')
     state.history.push({ role: 'user', content: text });
     
     const sysMsg = document.createElement('div');
@@ -478,34 +478,26 @@ async function sendMessage() {
 
     let reply = "";
     
-    // Verifica se a API Key foi preenchida
-    if (GEMINI_API_KEY && GEMINI_API_KEY.trim() !== "" && GEMINI_API_KEY !== "COLE_SUA_CHAVE_AQUI") {
-        try {
-            reply = await callGemini();
-        } catch (e) {
-            console.error("Erro na API:", e);
-            reply = "[Erro na API] Verifique se a chave é válida e se você não está abrindo o arquivo como 'file://'. Use um servidor local (Live Server).";
-        }
-    } else {
-        // Se não tiver API configurada, usa a IA simulada (melhorada)
-        await new Promise(r => setTimeout(r, 1000));
-        reply = fakeAI(text);
+    try {
+        reply = await callGemini();
+    } catch (e) {
+        console.error("Erro na chamada da IA:", e);
+        reply = "Desculpe, a ligação está com muito chiado e eu não entendi. Pode repetir?";
+        // Alerta visual para você saber que deu erro
+        alert("Erro na API! Aperte F12 e veja a aba 'Console' para entender o motivo.");
     }
 
     sysMsg.remove();
     addMessage(reply, 'ai');
     speak(reply);
     
-    // Adiciona resposta da IA ao histórico
     state.history.push({ role: 'model', content: reply });
     
-    // Verifica se gerou dados válidos
     const giftMatch = reply.match(/GIFT-[A-Z0-9]{4,6}/i);
     if (giftMatch && !state.validGifts.includes(giftMatch[0].toUpperCase())) {
         state.validGifts.push(giftMatch[0].toUpperCase());
     }
     
-    // Lógica de Trust do lado do cliente
     if (text.match(/banco|seguran|hack|urgente|pix|ajudar|resolver|sistema|bloqueado/i)) {
         state.trust += 10;
     } else if (text.match(/burra|idiota|velha|cala boca|xingar/i)) {
@@ -522,7 +514,6 @@ chatInput.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage
 async function callGemini() {
     const victim = state.currentVictim;
     
-    // O Prompt do Sistema (A mente da IA)
     const systemPrompt = `Você é ${victim.name}, tem ${victim.age} anos.
     SEU PROBLEMA ATUAL: ${victim.problem}.
     CONTEXTO: ${victim.context}.
@@ -540,64 +531,50 @@ async function callGemini() {
     8. Se for pedido Cartão de Crédito, invente um número de 16 dígitos.
     9. Responda em português do Brasil.`;
 
-    // Filtra o histórico para garantir que comece com 'user' e alterne corretamente
     let contents = [];
     for (let h of state.history) {
-        if (contents.length === 0 && h.role === 'model') continue; // Pula se começar com a IA
+        if (contents.length === 0 && h.role === 'model') continue;
         if (contents.length > 0 && contents[contents.length - 1].role === h.role) {
-            // Se for o mesmo papel (ex: duas msgs seguidas), junta com a anterior
-            contents[contents.length - 1].content += " " + h.content;
+            contents[contents.length - 1].parts[0].text += " " + h.content;
         } else {
             contents.push({ role: h.role, parts: [{ text: h.content }] });
         }
     }
 
-    // Certifica que a última mensagem é do user
     if (contents.length === 0 || contents[contents.length - 1].role === 'model') {
         contents.push({ role: 'user', parts: [{ text: "..." }] });
     }
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+    const payload = {
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: contents
+    };
+
+    let url = '';
+    let headers = { 'Content-Type': 'application/json' };
+
+    // Se tiver chave no código, chama direto (Bom para Live Server)
+    // Se não tiver, chama o proxy da Vercel (Bom para hospedagem segura)
+    if (GEMINI_API_KEY && GEMINI_API_KEY.trim() !== "" && GEMINI_API_KEY !== "COLE_SUA_CHAVE_AQUI") {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    } else {
+        url = `/api/chat`;
+    }
+
+    const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemPrompt }] },
-            contents: contents
-        })
+        headers: headers,
+        body: JSON.stringify(payload)
     });
     
     const data = await res.json();
+    
     if (data.error) {
+        console.error("Erro do Google:", data.error);
         throw new Error(data.error.message);
     }
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "Hmm...";
-}
-
-// IA Falsa (Melhorada para quando não há API)
-function fakeAI(text) {
-    const t = text.toLowerCase();
-    if (t.match(/banco|seguran|hack|conta|fraude|suspeita/)) {
-        state.trust += 10;
-        return "Meu Deus, é do banco? O que aconteceu com a minha conta? Eu tenho medo de perder meu dinheiro...";
-    }
-    if (t.match(/cartao|gift|presente|pix/)) {
-        if (state.trust >= 70) {
-            if (t.includes("cartao") || t.includes("crédito")) return "Tá bom... o número do meu cartão é 4532 1120 9834 2211.";
-            return "Tá bom... eu tenho um cartão presente aqui. O código é GIFT-8922.";
-        }
-        return "Cartão? Mas eu não sei mexer nisso muito bem... Por que eu preciso fazer isso?";
-    }
-    if (t.match(/urgente|rapido|rápido|agora/)) {
-        state.trust += 5;
-        return "Calma, moço! Tô nervosa já, fala o que eu faço.";
-    }
-    if (t.match(/burra|idiota|velha/)) {
-        state.trust -= 20;
-        return "Como é que é? Olha o respeito! Não quero mais falar com você não!";
-    }
     
-    state.trust += 2;
-    return "Hmm... não sei não, isso tá me parecendo estranho. Você tem certeza disso?";
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "Hmm...";
 }
 
 // ==========================================
